@@ -10,3 +10,6 @@
 # R artifacts
 *.Rcheck/
 *.tar.gz
+
+# folders
+scratch/

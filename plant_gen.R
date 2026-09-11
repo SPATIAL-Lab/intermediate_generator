@@ -1,13 +1,12 @@
 library(openxlsx)
 
-age_range_Ma <- c(0, 23.03)
+age_range_Ma <- c(0, 66)
 source_dir <- "data_plant"
-product_dir <- "product_plant"
 out_dir <- "output_plant"
-template_file <- "templates/stomata_IntermediateTemplate.xlsx"
-template_sheet <- "data4PSM"
+template_files <- c(stomata="templates/stomata_IntermediateTemplate.xlsx",
+                    konrad="templates/stomataKonrad_IntermediateTemplate.xlsx")
 proxy <- "plant"
-output_prefix <- "stomata"
+output_prefix <- "stomata(Konrad)?"
 age_divisor <- 1
 dir.create(out_dir, showWarnings=FALSE, recursive=TRUE)
 source("generator_checks.R", local=TRUE)
@@ -28,49 +27,45 @@ join <- function(x) { x <- unique(clean(x)); x <- x[!is.na(x)]; if(length(x)) pa
 study_id <- function(f) sub("_p[0-9.]+$", "", sub("^stomata-[^_]+_", "", tools::file_path_sans_ext(basename(f))))
 method_id <- function(f) sub("^stomata-([^_]+)_.*", "\\1", basename(f))
 
-base_names <- as.character(read.xlsx(template_file, template_sheet, rows=4, colNames=FALSE)[1,1:63])
-extra <- c("method", "species", "formation", "stratigraphic_level", "age_scale", "SD", "eSD", "SD_error_type",
-           "SI", "eSI", "SI_error_type", "ED", "eED", "ED_error_type", "stomata_count", "epidermal_count",
-           "leaf_count", "counts_per_leaf", "counting_method", "counting_area", "calibration_species",
-           "calibration_equation", "calibration_error", "NLE_SD_SI", "SR_standardization",
-           "d13Ca", "ed13Ca", "N_ed13Ca", "fixed_A", "b", "gamma", "temp",
-           "published_CO2", "published_CO2_low", "published_CO2_high", "CO2_type", "CO2_range_type",
-           "CO2_distribution", "product_sheet", "product_category", "product_category_reason",
-           "age_revision", "CO2_revision", "age_quarantined", "age_superseded_by", "CO2_superseded_by")
+templates <- lapply(template_files, function(f) {
+  x <- read.xlsx(f, "data4PSM", colNames=FALSE, skipEmptyRows=FALSE, skipEmptyCols=FALSE)
+  h <- which(vapply(x[[1]], function(v) identical(v, "sample"), logical(1)))
+  if(length(h)!=1) stop("Cannot identify template headers: ",f)
+  list(file=f, header=h, fields=as.character(unlist(x[h,],use.names=FALSE)),
+       defaults=if(nrow(x)>h) clean(unlist(x[h+1,],use.names=FALSE)) else NULL)
+})
+base_names <- templates$stomata$fields
+stopifnot(all(templates$konrad$fields %in% base_names))
+
+extra <- c("method", "species", "formation", "stratigraphic_level", "location", "age_scale",
+           "SD", "eSD", "SD_error_type", "SI", "eSI", "SI_error_type", "ED", "eED", "ED_error_type",
+           "leaf_count", "calibration_species", "calibration_equation", "SR_standardization", "age_revision")
 fields <- c(base_names, extra)
 stopifnot(!anyDuplicated(fields))
-map <- c(sample="^samplename$", doi="^doi$", lat="^modernlatitude", lon="^modernlong[ti]*tude",
+map <- c(sample="^samplenamea?$", doi="^doi$", lat="^modernlatitude", lon="^modernlong[ti]*tude",
          age_mean="^agema$", age_min="^ageuncertaintyyoungma$", age_max="^ageuncertaintyoldma$",
          age_notes="^howwasagedetermined", family="^family$", genus="^genus$", species="^species$",
-         formation="^geologicformation$", stratigraphic_level="^stratigraphiclevel$", age_scale="^agescale",
+         formation="^geologicformation$", stratigraphic_level="^stratigraphiclevel$", location="^location$",
+         age_scale="^agescale", age_revision="^specifyreasonforagerevision",
          gen_notes="^(generalnotes|notes|remarks|comments)$",
          SD="^(sample)?meanstomataldensity", eSD="^sderror", SI="^(sample)?meanstomatalindex", eSI="^sierror",
-         ED="^meanepidermaldensity", eED="^ederror", stomata_count="^stomata$", epidermal_count="^epidermalcells$",
-         leaf_count="^numberofleaves", counts_per_leaf="^numberofstomatalcounts", counting_method="^countingmethod",
-         counting_area="^countingbox", calibration_species="^(moderncalibrationspecies|nearestlivingequivalentspecies)$",
-         calibration_equation="^moderncalibrationregressionequation", calibration_error="^calibrationerror",
-         NLE_SD_SI="^nlesdsivalue$", SR_standardization="^standardization",
-         published_CO2="^(estimatedatmosphericco2concentrationppm|reportedmeanco2(ppm)?)$",
-         published_CO2_low="^(co2lowppm|reportedco2uncertaintylow)$",
-         published_CO2_high="^(co2highppm|reportedco2uncertaintyhigh)$", CO2_type="^co2type$",
-         CO2_range_type="^(whatistheco2range|whatistheuncertaintyrange)", CO2_distribution="^whatisthedistribution",
-         product_category="^proxycategory", product_category_reason="^specifyreasonforchoice",
-         age_revision="^specifyreasonforagerevision", CO2_revision="^specifyreasonforco2revision",
-         age_quarantined="^agedataquarantined", age_superseded_by="^agedatasuperseded", CO2_superseded_by="^co2datasuperseded")
-franks <- c(base_names[16:62], "d13Ca", "ed13Ca", "N_ed13Ca", "fixed_A", "b", "gamma", "temp")
+         ED="^meanepidermaldensity", eED="^ederror", leaf_count="^numberofleaves",
+         calibration_species="^(moderncalibrationspecies|nearestlivingequivalentspecies)$",
+         calibration_equation="^moderncalibrationregressionequation", SR_standardization="^standardization")
+franks <- base_names[16:62]
 map <- c(map, setNames(paste0("^",norm(franks),"$"),franks))
+
 primary <- c("Dab", "Dad", "GCLab", "GCLad", "GCWab", "GCWad", "d13Cp", "SD", "SI", "ED")
 measure <- c(primary, "eDab", "eDad", "eGCLab", "eGCLad", "eGCWab", "eGCWad", "ed13Cp", "eSD", "eSI", "eED")
 identity <- c("sample", "family", "genus", "species", "formation")
-comparison <- data.frame(file=character(), source_row=integer(), product=character(), product_row=integer(),
-                         field=character(), archive_value=character(), product_value=character(), action=character())
 
-read_plant <- function(f, product=FALSE) {
+read_plant <- function(f) {
   sheets <- getSheetNames(f)
-  wanted <- c(franks="leafgasexchangefranks", sd="stomataldensity", si="stomatalindex", sr="stomatalratio")
+  wanted <- c(franks="leafgasexchangefranks", sd="stomataldensity", si="stomatalindex", sr="stomatalratio",
+              `konrad-fom`="leafgasexchangefom", `konrad-rom`="leafgasexchangerom")
   method <- method_id(f)
   sheet <- which(norm(sheets) == wanted[method])
-  if (!length(sheet) && basename(f)%in%c("stomata-sd_liang_2022a_p1.0.xlsx","stomata-sd_stults_2011_p1.0.xlsx","stomata-sr_steinthorsdottir_2021_p1.0.xlsx")) sheet <- which(norm(sheets)%in%c("stomatalindex","sdsi"))
+  if (!length(sheet) && method=="sd") sheet <- which(norm(sheets)%in%c("stomatalindex","sdsi"))
   if (length(sheet)!=1) stop("Unrecognized plant method sheet: ",f)
   sheet <- sheets[sheet]
   raw <- read.xlsx(f, sheet, colNames=FALSE, skipEmptyCols=FALSE, skipEmptyRows=FALSE)
@@ -79,22 +74,30 @@ read_plant <- function(f, product=FALSE) {
   headers <- clean(unlist(raw[h,],use.names=FALSE)); nm <- norm(headers)
   rows <- which(seq_len(nrow(raw))>h & rowSums(!is.na(raw))>0)
   d <- as.data.frame(matrix(NA_character_,length(rows),length(fields)),stringsAsFactors=FALSE); names(d)<-fields
-  origins <- d
   for(k in names(map)) {
     cols <- which(grepl(map[[k]],nm))
     if(k=="doi" && length(cols)>1) cols<-cols[1]
     if(length(cols)>1 && k!="gen_notes") stop("Ambiguous header for ",k,": ",f)
     if(!length(cols))next
     if(k=="gen_notes") d[[k]]<-apply(raw[rows,cols,drop=FALSE],1,join) else d[[k]]<-clean(raw[rows,cols])
-    origins[[k]]<-ifelse(is.na(d[[k]]),NA,paste0(basename(f),"#",sheet,"!",int2col(cols[1]),rows))
     if(k %in% c("eSD","eSI","eED")) d[[paste0(sub("^e","",k),"_error_type")]]<-headers[cols]
   }
   if(!any(grepl("^agema$",nm)))stop("Missing Age (Ma) header: ",f)
-  if(!any(grepl(if(method=="franks") "^dab$" else "meanstomatal",nm)))stop("Missing measurement headers: ",f)
+  if(!any(nm=="nameofpersonenteringproductdata"))stop("Expected a plant product workbook: ",f)
+  age_errors <- match(c("ageuncertaintyposka", "ageuncertaintynegka"),nm)
+  if(!anyNA(age_errors)) {
+    age <- number(d$age_mean); old <- number(d$age_max); young <- number(d$age_min)
+    pos <- number(raw[rows,age_errors[1]])/1000
+    neg <- number(raw[rows,age_errors[2]])/1000
+    offsets <- which((age < young | age > old | young > old) & old >= 0 & young >= 0 &
+                     abs(old-pos)<1e-8 & abs(young-neg)<1e-8)
+    d$age_max[offsets] <- as.character(age[offsets]+old[offsets])
+    d$age_min[offsets] <- as.character(age[offsets]-young[offsets])
+    for(i in offsets) d$age_notes[i] <- join(c(d$age_notes[i],
+      "Age uncertainty offsets corroborated by product ka errors; converted to absolute Ma bounds."))
+  }
   d$method<-method
-  archive_name<-sub("_p[0-9.]+\\.xlsx$",".xlsx",basename(f))
-  d$archive_sheet<-clean(archive_links$url[match(archive_name,archive_links$file)])
-  d$product_sheet<-if(product) paste0("https://www.ncei.noaa.gov/pub/data/paleo/climate_forcing/trace_gases/Paleo-pCO2/product_files/",basename(f)) else NA_character_
+  d$archive_sheet<-basename(f)
   d$name_person<-"Harper and Giulivi";d$email_person<-"dustin.t.harper@utah.edu; claudiag@ldeo.columbia.edu"
   d$plant_grp<-vapply(seq_len(nrow(d)),function(i) {x<-c(d$family[i],d$genus[i]); x<-x[!is.na(x)]; if(length(x))paste(x,collapse=" / ") else NA_character_},character(1))
   for(k in c("eSD","eSI","eED")) {
@@ -104,23 +107,51 @@ read_plant <- function(f, product=FALSE) {
       d[[k]][explicit]<-sub("[[:space:];]*[sS].*$","",d[[k]][explicit])
     }
   }
-  if(method!="franks") {
+  if(method %in% c("sd","si","sr")) {
+    if(!any(grepl("meanstomatal",nm)))stop("Missing measurement headers: ",f)
     ok<-which(is.finite(number(d$SD)))
     d$Dab[ok]<-as.character(number(d$SD[ok])*1e6)
     d$eDab[ok]<-as.character(number(d$eSD[ok])*1e6)
-    origins$Dab[ok]<-origins$SD[ok];origins$eDab[ok]<-origins$eSD[ok]
     for(i in ok) {
       d$N_eDab[i]<-join(c(d$SD_error_type[i],if(!is.na(d$leaf_count[i]))paste(d$leaf_count[i],"leaves")))
-      origins$N_eDab[i]<-join(c(origins$SD[i],origins$leaf_count[i]))
       d$gen_notes[i]<-join(c(d$gen_notes[i],"Stomatal density treated as abaxial; density and uncertainty converted from mm^-2 to m^-2."))
     }
   }
+  if(method=="franks" && !any(nm=="dab"))stop("Missing Franks measurement headers: ",f)
+  observed <- rowSums(as.data.frame(lapply(d[primary],function(x)is.finite(number(x)))))>0
+  if(grepl("^konrad",method)) {
+    physical <- c(Dab="^stomataldensitysd", GCLab="^stomatalporelength", GCWab="^stomatalporedepth", d13Cp="^d13cplantmaterial")
+    scale <- c(Dab=1e6, GCLab=1e-6, GCWab=1e-6, d13Cp=1)
+    defaults <- templates$konrad$defaults
+    names(defaults) <- templates$konrad$fields
+    fixed <- names(defaults)[!is.na(defaults) & !grepl("<|2 sigma uncertainty",defaults)]
+    for(k in fixed) d[[k]] <- defaults[[k]]
+    observed <- rep(FALSE,nrow(d))
+    for(k in names(physical)) {
+      co <- which(grepl(physical[[k]],nm))
+      if(length(co)!=1 || co==length(nm) || nm[co+1]!="2suncertainty")stop("Unexpected Konrad measurement/error headers: ",f," / ",k)
+      if((k=="Dab" && !grepl("1mm2",nm[co])) || (k%in%c("GCLab","GCWab") && !grepl("µm|μm",nm[co])))stop("Unexpected Konrad units: ",f," / ",headers[co])
+      observed <- observed | is.finite(number(clean(raw[rows,co])))
+      d[[k]] <- as.character(number(clean(raw[rows,co]))*scale[[k]])
+      d[[paste0("e",k)]] <- as.character(number(clean(raw[rows,co+1]))*scale[[k]]/2)
+      d[[paste0("N_e",k)]] <- ifelse(is.na(d[[paste0("e",k)]]),NA,"1 sigma; source 2 sigma divided by 2")
+    }
+    for(i in seq_len(nrow(d))) {
+      d$sample[i] <- join(c(d$sample[i],d$location[i],d$formation[i],d$stratigraphic_level[i],d$species[i]))
+      d$gen_notes[i] <- join(c(d$gen_notes[i],"Pore length stored in GCLab (s1=1); pore depth stored in GCWab (s2=1). Density converted to m^-2; lengths to m; measured 2 sigma errors converted to 1 sigma."))
+    }
+    person <- which(nm=="nameofpersonenteringproductdata")
+    email <- which(nm=="emailofpersonenteringproductdata")
+    d$name_person <- clean(raw[rows,person]);d$email_person <- clean(raw[rows,email])
+  }
   d$.file<-basename(f);d$.row<-rows;d$.sheet<-sheet;d$.study<-study_id(f)
-  list(data=d,origins=origins)
+  d$.observed <- observed
+  d$.template<-if(grepl("^konrad",method))"konrad" else "stomata"
+  d
 }
 
 # Match within a study, using taxonomy and measurements to resolve repeated sample names.
-candidates <- function(row, d, product=FALSE) {
+candidates <- function(row, d) {
   ok <- rep(TRUE,nrow(d))
   for(k in c("doi", identity)) {
     a<-row[[k]];b<-d[[k]]
@@ -132,14 +163,14 @@ candidates <- function(row, d, product=FALSE) {
     for(k in c("family","genus","species","formation")) if(!is.na(row[[k]])) evidence<-evidence+(!is.na(d[[k]]) & same(row[[k]],d[[k]]))
     ok<-ok & evidence>=2
   }
-  if(!product) for(k in c("age_mean","stratigraphic_level")) {
+  for(k in c("age_mean","stratigraphic_level")) {
     if(!is.na(row[[k]]))ok<-ok & (is.na(d[[k]])|same(row[[k]],d[[k]]))
   }
   has_measurement<-function(x) rowSums(as.data.frame(lapply(x[primary],function(v) is.finite(number(v)))))>0
   if(has_measurement(row))ok<-ok & has_measurement(d)
-  else if(!product)return(integer())
+  else return(integer())
   ix<-which(ok)
-  if(length(ix)>1 || !product) {
+  {
     for(k in measure) {
       a<-row[[k]];b<-d[[k]][ix]
       if(!is.na(a))ix<-ix[is.na(b)|same(a,b)]
@@ -155,101 +186,33 @@ candidates <- function(row, d, product=FALSE) {
   }
   ix
 }
-record_change <- function(a,p,k,action) {
-  comparison <<- rbind(comparison,data.frame(file=a$.file,source_row=a$.row,product=p$.file,product_row=p$.row,
-    field=k,archive_value=as.character(a[[k]]),product_value=as.character(p[[k]]),action=action))
-}
-
 src_files<-list.files(source_dir,pattern="\\.xlsx$",full.names=TRUE)
 src_files<-src_files[!grepl("^~\\$",basename(src_files))]
-if(!length(src_files))stop("No plant source workbooks")
-if(!file.exists(file.path(product_dir,"archive_links.csv")))stop("Run refresh_plant_products.R first")
-archive_links<-read.csv(file.path(product_dir,"archive_links.csv"),stringsAsFactors=FALSE)
-if(!all(basename(src_files)%in%archive_links$file))stop("New source files: run refresh_plant_products.R first")
-manifest_file<-file.path(product_dir,"manifest.csv")
-if(!file.exists(manifest_file))stop("Run refresh_plant_products.R first")
-manifest<-read.csv(manifest_file,stringsAsFactors=FALSE)
-if(nrow(manifest)) {
-  hashes<-unname(tools::md5sum(file.path(product_dir,manifest$file)))
-  if(anyNA(hashes)||any(hashes!=manifest$md5))stop("Plant product cache changed; refresh manifest before running")
-}
-all_data<-list();all_origins<-list();coverage<-list()
-for(sf in src_files) {
-  if(!method_id(sf)%in%c("franks","sd","si","sr")) {
-    report_action("method",NA_integer_,method_id(sf),"Outside Franks/SD/SI/SR priority; not generated")
-    next
-  }
-  a<-read_plant(sf);d<-a$data;o<-a$origins
-  products<-manifest$file[sub("_p[0-9.]+\\.xlsx$",".xlsx",manifest$file)==basename(sf)]
-  coverage[[length(coverage)+1]]<-data.frame(file=basename(sf),product=join(products),status=if(length(products))"compared" else "no corresponding product in cached NOAA inventory")
-  if(length(products)>1)stop("Multiple cached versions: ",sf)
-  if(length(products)) {
-    p<-read_plant(file.path(product_dir,products),TRUE)
-    used<-integer()
-    for(i in seq_len(nrow(d))) {
-      ix<-candidates(d[i,],p$data,TRUE)
-      if(length(ix)!=1 || ix%in%used) {
-        report_action("product match",d$.row[i],join(p$data$.row[ix]),"No unique product match; archive retained")
-        next
-      }
-      j<-ix;used<-c(used,j);pr<-p$data[j,];d$product_sheet[i]<-pr$product_sheet
-      for(k in c(base_names, "species", "formation", "stratigraphic_level", "age_scale", "age_revision")) {
-        if(k %in% c("archive_sheet","name_person","email_person","plant_grp","method") || is.na(pr[[k]]) || same(d[[k]][i],pr[[k]]))next
-        age_revision<-grepl("^age_|^stratigraphic_level$",k) && !is.na(pr$age_revision)
-        use<-is.na(d[[k]][i]) || age_revision || grepl("^(product_|age_revision|CO2_revision|age_quarantined|age_superseded|CO2_superseded)",k)
-        action<-if(use)"product addition/revision used" else "unexplained difference; archive retained"
-        record_change(d[i,],pr,k,action)
-        if(k=="gen_notes") {d[[k]][i]<-join(c(d[[k]][i],pr[[k]]));o[[k]][i]<-join(c(o[[k]][i],p$origins[[k]][j]));next}
-        if(use) {d[[k]][i]<-pr[[k]];o[[k]][i]<-p$origins[[k]][j]}
-      }
-    }
-    new<-setdiff(seq_len(nrow(p$data)),used)
-    for(j in new) {
-      pr<-p$data[j,]
-      if(all(is.na(pr[primary]))) {report_action("product row",NA_integer_,paste(products,pr$.row),"CO2 summary without fossil measurements; not added as a sample");next}
-      ix<-candidates(pr,d,TRUE)
-      if(length(ix)) {report_issue("product match",d$.row[ix],paste(products,pr$.row),"Ambiguous product sample match; product row not added");next}
-      d<-rbind(d,pr);o<-rbind(o,p$origins[j,])
-      report_action("product row",NA_integer_,paste(products,pr$.row),"Additional measured product sample retained")
-    }
-  }
-  all_data[[length(all_data)+1]]<-d;all_origins[[length(all_origins)+1]]<-o
-}
-# Include extra product methods only for studies present in the source folder.
-studies<-unique(vapply(src_files,study_id,character(1)))
-for(pf in manifest$file) {
-  if(!study_id(pf)%in%studies || sub("_p[0-9.]+\\.xlsx$",".xlsx",pf)%in%basename(src_files))next
-  sf<-pf;p<-read_plant(file.path(product_dir,pf),TRUE)
-  all_data[[length(all_data)+1]]<-p$data;all_origins[[length(all_origins)+1]]<-p$origins
-}
-dat<-do.call(rbind,all_data);origins<-do.call(rbind,all_origins)
-rownames(dat)<-rownames(origins)<-NULL
+if(!length(src_files))stop("No plant product workbooks")
+keys <- paste(vapply(src_files,method_id,character(1)),vapply(src_files,study_id,character(1)))
+if(anyDuplicated(keys))stop("Keep only one product version per method/study in data_plant")
+dat<-do.call(rbind,lapply(src_files,read_plant))
+rownames(dat)<-NULL
+message(sum(!dat$.observed)," CO2-only product rows excluded (no fossil measurements)")
 
 eligible<-rep(FALSE,nrow(dat))
 for(st in unique(dat$.study)) {
   ids<-which(dat$.study==st)
-  priority<-if("franks"%in%dat$method[ids])c("franks","sd") else c("sd","si","sr")
+  priority<-if("franks"%in%dat$method[ids])c("franks","sd") else if(any(dat$method[ids]%in%c("sd","si","sr")))c("sd","si","sr") else c("konrad-fom","konrad-rom")
   for(i in ids[!dat$method[ids]%in%priority]) {
     sf<-dat$.file[i];report_action("method",dat$.row[i],dat$method[i],"Not selected by study method priority")
   }
-  eligible[ids]<-dat$method[ids]%in%priority
+  eligible[ids]<-dat$method[ids]%in%priority & dat$.observed[ids]
 }
 for(sf in unique(dat$.file[eligible])) {
   ix<-which(dat$.file==sf & eligible)
   eligible[ix]<-select_age(dat$age_mean[ix],dat$.row[ix])
 }
-# Report unresolved product differences only for records in the selected age range/methods.
-for(i in which(comparison$action=="unexplained difference; archive retained" & comparison$field!="gen_notes")) {
-  z<-comparison[i,];ix<-which(dat$.file==z$file & dat$.row==z$source_row & eligible)
-  if(length(ix)) {sf<-z$file;report_issue(z$field,z$source_row,paste(z$archive_value,"vs",z$product_value,"in",z$product,z$product_row),"Unexplained product difference; archive retained")}
-}
-
-method_data<-dat[eligible,,drop=FALSE]
-result<-dat[FALSE,];result_origins<-origins[FALSE,];membership<-integer(nrow(dat))
+result<-dat[FALSE,];membership<-integer(nrow(dat))
 ambiguous <- data.frame(file_1=character(), source_row_1=integer(), file_2=character(), source_row_2=integer(), sample=character(), status=character())
 for(st in unique(dat$.study)) {
   ids<-which(dat$.study==st & eligible)
-  ids<-ids[order(match(dat$method[ids],c("franks","sd","si","sr")))]
+  ids<-ids[order(match(dat$method[ids],c("franks","sd","si","sr","konrad-fom","konrad-rom")))]
   for(i in ids) {
     row<-dat[i,];sf<-row$.file
     ix<-which(result$.study==st)
@@ -259,14 +222,13 @@ for(st in unique(dat$.study)) {
     if(length(ix)==1) {
       j<-ix
       for(k in fields) {
-        if(is.na(result[[k]][j]) && !is.na(row[[k]])) {result[[k]][j]<-row[[k]];result_origins[[k]][j]<-origins[[k]][i]}
+        if(is.na(result[[k]][j]) && !is.na(row[[k]])) {result[[k]][j]<-row[[k]]}
       }
       result$gen_notes[j]<-join(c(result$gen_notes[j],row$gen_notes))
-      result_origins$gen_notes[j]<-join(c(result_origins$gen_notes[j],origins$gen_notes[i]))
       membership[i]<-j
       report_action("sample",row$.row,row$sample,"Matching measurements merged; lower-priority data fill blanks; source rows recorded in plant_duplicate_candidates.csv")
     } else {
-      result<-rbind(result,row);result_origins<-rbind(result_origins,origins[i,]);membership[i]<-nrow(result)
+      result<-rbind(result,row);membership[i]<-nrow(result)
       if(length(ix)>1) ambiguous <- rbind(ambiguous, data.frame(
         file_1=result$.file[ix], source_row_1=result$.row[ix], file_2=row$.file,
         source_row_2=row$.row, sample=row$sample,
@@ -283,23 +245,23 @@ for(i in seq_len(nrow(result))) {
   possible<-setdiff(possible,removed)
   for(j in possible) {
     if(is.na(result$gen_notes[i]) || is.na(result$doi[j]) || !grepl(result$doi[j],result$gen_notes[i],fixed=TRUE))next
+    if(result$.template[i]!=result$.template[j])next
     keys<-c("family","genus","species","age_mean",measure)
     if(!all(same(unlist(result[i,keys]),unlist(result[j,keys]))))next
     removed<-c(removed,i);membership[membership==i]<-j
     duplicates<-rbind(duplicates,data.frame(removed_file=result$.file[i],removed_row=result$.row[i],retained_file=result$.file[j],retained_row=result$.row[j],sample=result$sample[i]))
     result$gen_notes[j]<-join(c(result$gen_notes[j],result$gen_notes[i]))
-    result_origins$gen_notes[j]<-join(c(result_origins$gen_notes[j],result_origins$gen_notes[i]))
     sf<-result$.file[i];report_action("duplicate",result$.row[i],result$sample[i],paste("Repeated measurements; original source retained:",result$.file[j],result$.row[j]))
     break
   }
 }
 keep<-setdiff(seq_len(nrow(result)),removed)
 membership<-match(membership,keep,nomatch=0)
-result<-result[keep,,drop=FALSE];result_origins<-result_origins[keep,,drop=FALSE]
+result<-result[keep,,drop=FALSE]
 
 
 numeric_fields<-c("lat","lon","age_mean","age_2s","age_min","age_max",setdiff(franks, c(grep("^N_",franks,value=TRUE),"fixed_A")),
-                  "SD","eSD","SI","eSI","ED","eED","stomata_count","epidermal_count","published_CO2","published_CO2_low","published_CO2_high")
+                  "SD","eSD","SI","eSI","ED","eED")
 for(sf in unique(dat$.file)) {
   ix<-which(dat$.file==sf & eligible & dat$method!="franks" & is.finite(number(dat$Dab)))
   report_action("Dab",dat$.row[ix],dat$Dab[ix],"SD and error converted to m^-2; assumed abaxial surface recorded in notes")
@@ -319,10 +281,15 @@ for(sf in unique(result$.file)) {
     bad<-ix[!is.na(value) & !grepl("1(sem|sd|standarddeviation)",type)]
     report_issue(paste0(k," uncertainty"),result$.row[bad],result[[paste0(k,"_error_type")]][bad],"Uncertainty type needs review; raw magnitude retained")
   }
+  if(result$.template[ix[1]]=="konrad") {
+    for(k in c("Dab","GCLab","GCWab","d13Cp")) {
+      bad <- ix[!is.na(result[[k]][ix]) & is.na(result[[paste0("e",k)]][ix])]
+      report_issue(paste0("e",k),result$.row[bad],NA_character_,"Measurement present; uncertainty missing in product")
+    }
+  }
   x<-result[ix,base_names];names(x)<-int2col(1:63)
   check_output(x,result$.row[ix],intersect(int2col(which(base_names %in% numeric_fields)),names(x)),character())
 }
-# Additional method measurements also satisfy the primary-measurement check.
 problems<-problems[problems$problem!="No primary proxy measurement mapped",]
 for(i in seq_len(nrow(result))) {
   sf<-result$.file[i]
@@ -330,21 +297,36 @@ for(i in seq_len(nrow(result))) {
 }
 for(k in numeric_fields)result[[k]]<-number(result[[k]])
 
-write_book <- function(x, file) {
-  wb<-loadWorkbook(template_file)
-  writeData(wb,template_sheet,t(rep("",63)),startRow=1,colNames=FALSE)
-  writeData(wb,template_sheet,x[,base_names,drop=FALSE],startRow=5,colNames=FALSE,keepNA=FALSE)
+write_book <- function(x, file, kind) {
+  template <- templates[[kind]]
+  wb<-loadWorkbook(template$file)
+  if(kind=="stomata")writeData(wb,"data4PSM",t(rep("",length(template$fields))),startRow=1,colNames=FALSE)
+  else writeData(wb,"data4PSM",t(rep("",length(template$fields))),startRow=template$header+1,colNames=FALSE)
+  if(kind=="konrad") {
+    normal <- grepl("grein_2011",x$.file)
+    if(any(normal) && !all(same(x$age_mean[normal]-x$age_min[normal],x$age_max[normal]-x$age_mean[normal])))stop("Grein age bounds are not symmetric")
+    x$age_2s[normal] <- x$age_mean[normal]-x$age_min[normal]
+    x$age_mean[!normal] <- NA_real_
+    x$age_min[normal] <- x$age_max[normal] <- NA_real_
+  }
+  writeData(wb,"data4PSM",x[,template$fields,drop=FALSE],startRow=template$header+1,colNames=FALSE,keepNA=FALSE)
   saveWorkbook(wb,file,overwrite=TRUE)
 }
-for(st in unique(result$.study)) {
-  ix<-which(result$.study==st)
-  out_file<-file.path(out_dir,paste0("stomata_Intermediate_",st,".xlsx"))
-  write_book(result[ix,,drop=FALSE],out_file)
-  current_outputs<-c(current_outputs,out_file)
-  files<-unique(dat$.file[dat$.study==st]);study_outputs[files]<-out_file
+for(kind in c("stomata","konrad")) {
+  prefix <- if(kind=="konrad")"stomataKonrad" else "stomata"
+  for(st in unique(result$.study[result$.template==kind])) {
+    ix<-which(result$.study==st & result$.template==kind)
+    out_file<-file.path(out_dir,paste0(prefix,"_Intermediate_",st,".xlsx"))
+    write_book(result[ix,,drop=FALSE],out_file,kind)
+    current_outputs<-c(current_outputs,out_file)
+  }
+  ix <- which(result$.template==kind)
+  if(length(ix)) {
+    combined<-file.path(out_dir,paste0(prefix,"_Intermediate_combined.xlsx"))
+    write_book(result[ix,,drop=FALSE],combined,kind)
+    current_outputs<-c(current_outputs,combined)
+  }
 }
-combined<-file.path(out_dir,"stomata_Intermediate_combined.xlsx")
-write_book(result,combined);current_outputs<-c(current_outputs,combined)
 candidates <- ambiguous
 for(j in seq_len(nrow(result))) {
   ids <- which(membership==j)
