@@ -1,5 +1,0 @@
-"file","source_row","intermediate_row","unique_id","sample_name","parent_id","child_id","include_TF","include_explanation","publication_year","age_Ma","lat","lon","material","d13Corg","tempC","compilation_notes","combined_row"
-"phytoplankton_andersen_1999.xlsx",4,5,"phytoplankton_Andersen_1999_1",,,,"T",,1999,0.0013,-11.7705,11.6819,"Mk37_2",-23.48,25.1,"No pCO2 uncertainties reported in data table or figures. Typical uncertainty of ~10% is outlined in Table 2.",5
-"phytoplankton_andersen_1999.xlsx",5,6,"phytoplankton_Andersen_1999_2",,,,"T",,1999,0.006,-11.7705,11.6819,"Mk37_2",-23.64,26.1,"No pCO2 uncertainties reported in data table or figures. Typical uncertainty of ~10% is outlined in Table 2.",6
-"phytoplankton_zhang_2020.xlsx",4,5,"phytoplankton_Andersen_1999_1","60-63.5","phytoplankton_Pagani_2005_6",,"T",,2020,32.7322731018066,-51,-46.9,"Mk37_2",-34.80425,9.43964655565767,,2150
-"phytoplankton_zhang_2020.xlsx",5,6,"phytoplankton_Andersen_1999_2","63.5-67.5",,,"T",,2020,33.309211730957,-51,-46.9,"Mk37_2",-34.70525,12.2446132582512,,2151

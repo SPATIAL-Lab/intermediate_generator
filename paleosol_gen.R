@@ -1,348 +1,106 @@
-# age range in Ma (youngest, oldest); c(-Inf, Inf) includes all dated samples
-age_range_Ma <- c(0, 23.03)
-
 library(openxlsx)
 
-# paths 
-template_file <- file.path("templates", "paleosol_IntermediateTemplate.xlsx")
-template_sheet <- "data4PSM"
-
-source_dir <- "data_paleosol"
-source_sheet <- "paleosol data"
-archive_dir <- "https://www.ncei.noaa.gov/pub/data/paleo/climate_forcing/trace_gases/Paleo-pCO2/"
-archive_files <- c("paleosol_cotton_2012.xlsx", "paleosol_da_2015.xlsx",
-                   "paleosol_da_2019.xlsx", "paleosol_ji_2018.xlsx")
-
-out_dir <- "output_paleosol"
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-proxy <- "paleosol"
-output_prefix <- "paleosol"
+age_range_Ma <- c(0, 541)
+proxy <- output_prefix <- "paleosol"
 age_divisor <- 1
-source("generator_checks.R", local = TRUE)
+out_dir <- "output_paleosol"
+template_file <- "templates/paleosol_IntermediateTemplate.xlsx"
+template_sheet <- "data4PSM"
+source("generator_checks.R",local=TRUE)
+dir.create(out_dir,showWarnings=FALSE)
+src_files <- source_files(proxy)
+generated_data <- screen_data <- list()
 
-src_files <- list.files(source_dir, pattern = "\\.xlsx$", full.names = TRUE)
-src_files <- src_files[!grepl("^~\\$", basename(src_files))]
-if (!length(src_files)) stop("No .xlsx files found in: ", source_dir)
-if (!file.exists(template_file)) stop("Template not found: ", template_file)
-if (any(!basename(src_files) %in% archive_files))
-  stop("Check NOAA archive filenames for: ",
-       paste(basename(src_files)[!basename(src_files) %in% archive_files], collapse = ", "))
+# Match the measurement headers shared by the old and new layouts.
+map <- c(A="^sampleid$",B="^doi$",F="^(modern|site)latitude",G="^(modern|site)longitude",
+  M="^paleosolnumber$",N="^soiltexture",O="^soilhorizonfororganicmatter",P="^organicmattertype$",
+  Q="^d13ccc(pdb)?$",R="^d13cccuncertainty",S="^d13coccludedom(pdb)?$",T="^d13coccludedomuncertainty",
+  U="^d13cbulkpaleosolom(pdb)?$",V="^d13cbulkpaleosolomuncertainty",W="^d13cenamel(pdb)?$",X="^d13cenameluncertainty",
+  Y="^d18occ(pdb)?$",Z="^d18occuncertainty",AA="^temperatureofcalciumcarbonateformation",
+  AC="^meanannualprecipitation",AE="^notes$")
+numeric_cols <- c("F","G","H","I","J","K",LETTERS[17:26],"AA","AB","AC","AD")
 
-# helpers 
-xl_col <- function(x) {
-  x <- toupper(gsub("[^A-Z]", "", x))
-  if (!nzchar(x)) return(NA_integer_)
-  chars <- strsplit(x, "", fixed = TRUE)[[1]]
-  idx <- 0L
-  for (ch in chars) idx <- idx * 26L + (utf8ToInt(ch) - utf8ToInt("A") + 1L)
-  idx
-}
-
-get_col <- function(dat, let) {
-  ii <- xl_col(let)
-  if (is.na(ii) || ii < 1L || ii > ncol(dat)) return(rep(NA, nrow(dat)))
-  dat[[ii]]
-}
-
-as_num <- function(x) suppressWarnings(as.numeric(as.character(x)))
-as_chr <- function(x) {
-  y <- as.character(x)
-  y[y %in% c("NA", "NaN", "NULL")] <- NA_character_
-  y
-}
-
-is_missing <- function(x) {
-  z <- trimws(as.character(x))
-  is.na(x) | is.na(z) | z == "" | toupper(z) == "NA"
-}
-
-is_norm <- function(x) {
-  z <- tolower(trimws(as.character(x)))
-  z %in% c("normal distribution", "set value", "5 to 95 percentile", "normal")
-}
-is_unif <- function(x) {
-  z <- tolower(trimws(as.character(x)))
-  z %in% c("uniform distribution", "range", "uniform")
-}
-
-# duplicate screening
-find_duplicates <- function(x, site_tolerance = 0.01, isotope_tolerance = 1e-6) {
-  same <- function(a, b) !is_missing(a) & !is_missing(b) & a == b
-  close <- function(a, b, tolerance) !is.na(a) & !is.na(b) & abs(a - b) <= tolerance
-  pairs <- data.frame(i = integer(), j = integer(), reason = character())
-  if (nrow(x) > 1) for (i in seq_len(nrow(x) - 1)) {
-    j <- seq.int(i + 1, nrow(x))
-    site <- close(x$lat[i], x$lat[j], site_tolerance) &
-            close(x$lon[i], x$lon[j], site_tolerance)
-    id <- same(x$sample[i], x$sample[j])
-    isotope <- close(x$d13Ccc[i], x$d13Ccc[j], isotope_tolerance) &
-      (close(x$d13Com_occluded[i], x$d13Com_occluded[j], isotope_tolerance) |
-       close(x$d13Com_bulk[i], x$d13Com_bulk[j], isotope_tolerance))
-    depth <- same(x$formation[i], x$formation[j]) &
-             close(x$depth_m[i], x$depth_m[j], 1e-6)
-    for (k in which(site & (id | isotope | depth))) {
-      reason <- paste(c("sample ID", "carbonate + organic isotopes", "formation + depth")
-                      [c(id[k], isotope[k], depth[k])], collapse = "; ")
-      pairs <- rbind(pairs, data.frame(i = i, j = j[k], reason = reason))
-    }
+for(sf in src_files) {
+  message("Reading: ",basename(sf))
+  dat <- read_source(sf);source_rows<-attr(dat,"rows");source_sheet<-attr(dat,"sheet")
+  age <- num(field(dat,"^age(ma)?$"))
+  summary_age <- num(field(dat,"^ageka$"))/1000
+  product <- grepl("^product_",dirname(sf))
+  if(product)age[!is.na(summary_age)]<-summary_age[!is.na(summary_age)]
+  keep <- select_rows(dat,age,source_rows)
+  dat<-dat[keep,,drop=FALSE];source_rows<-source_rows[keep];age<-age[keep]
+  if(!nrow(dat))next
+  n<-nrow(dat); get<-function(pattern,offset=0)field(dat,pattern,offset)
+  out_df <- as.data.frame(matrix(NA_character_,n,31));names(out_df)<-int2col(1:31)
+  for(co in names(map))out_df[[co]]<-get(map[[co]])
+  out_df$C<-basename(sf);out_df$D<-"Harper and Giulivi"
+  out_df$E<-"dustin.t.harper@utah.edu; claudiag@ldeo.columbia.edu"
+  out_df$H<-age
+  out_df$L<-mapply(join_notes,get("^(referencesforage|notesonagedetermination)$"),get("^specifyreasonforagerevision$"))
+  lo<-num(get("^agemin(ma)?$"));hi<-num(get("^agemax(ma)?$"))
+  reversed<-which(lo>hi & age>=hi & age<=lo)
+  if(length(reversed)) {
+    old<-lo[reversed];lo[reversed]<-hi[reversed];hi[reversed]<-old
+    for(i in reversed)out_df$L[i]<-join_notes(out_df$L[i],"Reversed age bounds put in younger-to-older order.")
   }
-  left <- x[pairs$i, , drop = FALSE]
-  right <- x[pairs$j, , drop = FALSE]
-  names(left) <- paste0(names(left), "_1")
-  names(right) <- paste0(names(right), "_2")
-  data.frame(reason = pairs$reason, left, right, row.names = NULL)
+  ap<-num(get("^ageuncertaintypositive"));an<-num(get("^ageuncertaintynegative"))
+  at<-get("^typeofuncertaintyonage")
+  if(product) {
+    sp<-num(get("^ageuncertaintyposka$"))/1000;sn<-num(get("^ageuncertaintynegka$"))/1000
+    # Older products store absolute age bounds; shift them with a revised central age.
+    has_bounds<-!is.na(lo)|!is.na(hi)
+    lo[has_bounds & !is.na(sn)]<-age[has_bounds & !is.na(sn)]-sn[has_bounds & !is.na(sn)]
+    hi[has_bounds & !is.na(sp)]<-age[has_bounds & !is.na(sp)]+sp[has_bounds & !is.na(sp)]
+    use<-!has_bounds & (!is.na(sp)|!is.na(sn))
+    ap[use]<-sp[use];an[use]<-sn[use]
+  }
+  at<-product_age_type(at,ap,an,product)
+  unc<-error_2s(age,ap,an,at,"age uncertainty")
+  out_df$I<-unc$error;out_df$J<-ifelse(is.na(lo),unc$min,lo);out_df$K<-ifelse(is.na(hi),unc$max,hi)
+  # Respired carbon is the fallback when neither organic pool was measured.
+  use<-is.na(out_df$S)&is.na(out_df$U) & any(grepl("^otherd13crapproach$",names(dat)))
+  out_df$U[use]<-get("^d13cr(pdb)?$")[use]
+  out_df$V[use]<-get("^d13cruncertainty")[use]
+  out_df$AE<-mapply(join_notes,out_df$AE,get("^additionalpublicationsthatarepartofthedataset$"))
+  for(co in c("AB","AD")) {
+    prefix<-if(co=="AB")"temperature" else "map"
+    pos<-grep(paste0("^",prefix,"uncertainty"),names(dat))[1]
+    value<-if(is.na(pos))rep(NA_real_,n) else num(sub("^[[:space:]]*(±|\\+/-)[[:space:]]*","",dat[[pos]]))
+    explicit<-!is.na(pos) && grepl("2s",names(dat)[pos])
+    type<-if(explicit)rep("2sd",n) else get(paste0("^",prefix,"uncertainty"),2)
+    if(!explicit && (is.na(pos) || !grepl("typeof.*uncertainty",names(dat)[pos+2])))type<-rep(NA_character_,n)
+    other<-num(sub("^[[:space:]]*(±|\\+/-)[[:space:]]*","",get(paste0("^other",prefix,"uncertainty"))))
+    use<-is.na(value)&!is.na(other)
+    value[use]<-other[use];type[use]<-get(paste0("^other",prefix,"uncertainty"),1)[use]
+    out_df[[co]]<-error_2s(num(out_df[[if(co=="AB")"AA" else "AC"]]),value,type=type,field_name=paste(prefix,"uncertainty"))$error
+  }
+  for(co in numeric_cols) {
+    raw<-text_value(out_df[[co]]);value<-num(raw);bad<-which(!is.na(raw)&is.na(value))
+    report_issue(co,source_rows[bad],raw[bad],"Non-numeric measurement; left blank")
+    out_df[[co]]<-value
+  }
+  file_id<-sub("^paleosol_","",source_key(sf))
+  study_outputs[basename(sf)]<-file.path(out_dir,paste0("paleosol_Intermediate_",file_id,".xlsx"))
+  generated_data[[basename(sf)]]<-out_df
+  screen_data[[basename(sf)]]<-data.frame(file=basename(sf),sheet=source_sheet,source_row=source_rows,
+    publication_year=num(get("^publicationyear$")),sample=out_df$A,lat=out_df$F,lon=out_df$G,age_Ma=age,
+    formation=get("^rockformationname$"),depth_m=num(get("^stratigraphiclevel")))
 }
 
-# main loop 
-generated_data <- list()
-screen_data <- list()
-for (sf in src_files) {
-
-  sheets <- getSheetNames(sf)
-  source_sheet_i <- if (source_sheet %in% sheets) {
-    source_sheet
-  } else if ("paleosol" %in% sheets) {
-    "paleosol"
-  } else if ("paleosols" %in% sheets) {
-    "paleosols"
-  } else {
-    stop("Could not find paleosol data sheet in: ", sf)
+# Apply the shared duplicate rules before writing.
+if(length(generated_data)) {
+  d<-do.call(rbind,generated_data);m<-do.call(rbind,screen_data)
+  identity_match<-function(i,j) {
+    close<-function(a,b,tol=1e-6)!is.na(a)&&!is.na(b)&&abs(a-b)<=tol
+    same<-function(a,b)!is.na(a)&&!is.na(b)&&tolower(trimws(a))==tolower(trimws(b))
+    site<-close(m$lat[i],m$lat[j],.01)&&close(m$lon[i],m$lon[j],.01)
+    site && (same(m$sample[i],m$sample[j]) || (same(m$formation[i],m$formation[j])&&close(m$depth_m[i],m$depth_m[j])))
   }
-
-  dat <- read.xlsx(sf, sheet = source_sheet_i, startRow = 3, colNames = TRUE,
-                   skipEmptyCols = FALSE, skipEmptyRows = FALSE)
-
-  keep <- apply(dat, 1, function(r) any(!is.na(r) & trimws(as.character(r)) != ""))
-  source_rows <- which(keep) + 3L
-  dat <- dat[keep, , drop = FALSE]
-  if (!nrow(dat)) next
-
-  age_keep <- select_age(dat[["Age.(Ma)"]], source_rows)
-  dat <- dat[age_keep, , drop = FALSE]
-  source_rows <- source_rows[age_keep]
-  if (!nrow(dat)) next
-
-  n <- nrow(dat)
-
-  author <- if ("first_author_last_name" %in% names(dat)) as.character(dat$first_author_last_name[1]) else ""
-  year   <- if ("publication_year"      %in% names(dat)) as.character(dat$publication_year[1])      else ""
-
-  author <- iconv(author, to = "ASCII//TRANSLIT")
-  author <- gsub("[^A-Za-z0-9]+", "_", author)
-
-  year   <- gsub("[^0-9]+", "", year)
-  if (!nzchar(author)) author <- gsub("[^A-Za-z0-9]+", "_", tools::file_path_sans_ext(basename(sf)))
-
-  out_file <- file.path(out_dir, paste0("paleosol_Intermediate_", author, year, ".xlsx"))
-
-  wb <- loadWorkbook(template_file)
-
-  blank_row1 <- as.data.frame(matrix("", nrow = 1, ncol = 31))
-  writeData(wb, template_sheet, blank_row1,
-            startRow = 1, startCol = 1, colNames = FALSE, rowNames = FALSE)
-
-  # mapping
-  early_layout <- all(c("Sample.ID", "Age.(Ma)", "Age_max.(Ma)", "Age_min.(Ma)",
-                     "Temperature.of.calcium.carbonate.formation.(°C)", "Notes") ==
-                   names(dat)[c(17, 24, 25, 26, 88, 134)])
-  if (is.na(early_layout)) early_layout <- FALSE
-
-  if (early_layout) {
-    # Ji, Cotton and Da 2015
-    cols <- c(A="Q", B="D", F="S", G="T", H="X", J="Z", K="Y", L="AA",
-              N="DK", O="DN", P="DP", Q="AB", R="AC", S="AF", T="AG",
-              U="AI", V="AJ", W="AM", X="AN", Y="AQ", Z="AR",
-              AA="CJ", AB="CL", AC="CU", AD="CW", AE="ED")
-    for (co in names(cols)) assign(paste0("col", co), get_col(dat, cols[[co]]))
-    colA <- as_chr(colA)
-    colC <- rep(paste0(archive_dir, basename(sf)), n)
-    colD <- rep("Harper and Giulivi", n)
-    colE <- rep("dustin.t.harper@utah.edu; claudiag@ldeo.columbia.edu", n)
-    colI <- rep(NA_real_, n)
-    colM <- rep(NA, n)
-
-    # Temperature and MAP uncertainty to 2s
-    for (co in c("AB", "AD")) {
-      type_col <- if (co == "AB") "CN" else "CY"
-      type <- gsub("[[:space:]]", "", tolower(as.character(get_col(dat, type_col))))
-      value <- as_num(get(paste0("col", co)))
-      one <- type %in% c("1sd", "1se", "1std", "1sem")
-      two <- type %in% c("2sd", "2se", "2std", "2sem")
-      bad <- which(!is.na(value) & !one & !two)
-      report_issue(type_col, source_rows[bad], type[bad], "Unrecognized uncertainty type; generation stopped")
-      if (length(bad)) stop("Unrecognized ", type_col, " uncertainty in: ", sf)
-      value[one] <- value[one] * 2
-      assign(paste0("col", co), value)
-    }
-  } else {
-    later_layout <- all(c("Sample.ID", "Age.(Ma)", "paleosol.number",
-                          "Temperature.of.calcium.carbonate.formation.(°C)",
-                          "Soil.texture.(Grain.size)") ==
-                        names(dat)[c(16, 26, 32, 93, 130)])
-    if (!isTRUE(later_layout)) stop("Unrecognized paleosol layout in: ", sf)
-
-    colA <- get_col(dat, "P")
-
-    colB <- get_col(dat, "D")
-
-    colC <- rep(paste0(archive_dir, basename(sf)), n)
-
-    colD <- rep("Harper and Giulivi", n)
-
-    colE <- rep("dustin.t.harper@utah.edu; claudiag@ldeo.columbia.edu", n)
-
-    colF <- get_col(dat, "R")
-
-    colG <- get_col(dat, "S")
-
-    colH <- get_col(dat, "Z")
-
-    ACtype <- get_col(dat, "AC")
-    Z  <- as_num(get_col(dat, "Z"))
-    AA <- as_num(get_col(dat, "AA"))
-    AB <- as_num(get_col(dat, "AB"))
-
-    colI <- rep(NA_real_, n)
-    ii <- is_norm(ACtype)
-    colI[ii] <- (AA[ii] + AB[ii]) / 2
-
-    colJ <- rep(NA_real_, n)
-    jj <- is_unif(ACtype)
-    colJ[jj] <- Z[jj] - AB[jj]
-
-    colK <- rep(NA_real_, n)
-    colK[jj] <- Z[jj] + AA[jj]
-
-    colL <- get_col(dat, "AD")
-
-    colM <- get_col(dat, "AF")
-
-    colN <- get_col(dat, "DZ")
-
-    colO <- get_col(dat, "EK")
-
-    colP <- get_col(dat, "EM")
-
-    colQ <- get_col(dat, "AG")
-
-    colR <- get_col(dat, "AH")
-
-    colS <- get_col(dat, "AK")
-
-    colT <- get_col(dat, "AL")
-
-    ANsrc <- get_col(dat, "AN")
-    AKsrc <- get_col(dat, "AK")
-    BYsrc <- get_col(dat, "BY")
-
-    colU <- ANsrc
-    condU <- is_missing(ANsrc) & is_missing(AKsrc)
-    colU[condU] <- BYsrc[condU]
-
-    AOsrc <- get_col(dat, "AO")
-    ALsrc <- get_col(dat, "AL")
-    CCsrc <- get_col(dat, "CC")
-
-    colV <- AOsrc
-    condV <- is_missing(AOsrc) & is_missing(ALsrc)
-    colV[condV] <- CCsrc[condV]
-
-    colW <- get_col(dat, "AR")
-
-    colX <- get_col(dat, "AS")
-
-    colY <- get_col(dat, "AV")
-
-    colZ <- get_col(dat, "AW")
-
-    colAA <- get_col(dat, "CO")
-
-    CSsrc <- get_col(dat, "CS")
-    CUsrc <- get_col(dat, "CU")
-    colAB <- CSsrc
-
-    useCU <- is_missing(CSsrc) & !is_missing(CUsrc)
-    colAB[useCU] <- CUsrc[useCU]
-
-    colAC <- get_col(dat, "DE")
-
-    colAD <- get_col(dat, "DH")
-
-    notes_col <- which(names(dat) == "Notes")
-    if (length(notes_col) != 1) stop("Could not identify notes column in: ", sf)
-    colAE <- as_chr(dat[[notes_col]])
-
-  }
-
-  out_df <- data.frame(
-    A  = colA,  B  = colB,  C  = colC,  D  = colD,  E  = colE,
-    F  = colF,  G  = colG,  H  = colH,  I  = colI,  J  = colJ,
-    K  = colK,  L  = colL,  M  = colM,  N  = colN,  O  = colO,
-    P  = colP,  Q  = colQ,  R  = colR,  S  = colS,  T  = colT,
-    U  = colU,  V  = colV,  W  = colW,  X  = colX,  Y  = colY,
-    Z  = colZ,  AA = colAA, AB = colAB, AC = colAC, AD = colAD,
-    AE = colAE,
-    stringsAsFactors = FALSE
-  )
-
-  for (co in c("F", "G", "H", "I", "J", "K", LETTERS[17:26], "AA", "AB", "AC", "AD")) {
-    x <- as.character(out_df[[co]])
-    x[tolower(trimws(x)) == "not reported" & !is.na(x)] <- NA_character_
-    value <- as_num(x)
-    bad <- which(!is_missing(x) & is.na(value))
-    report_issue(co, source_rows[bad], x[bad], "Non-numeric output value; generation stopped")
-    if (length(bad)) stop("Non-numeric value in output column ", co, " in: ", sf)
-    out_df[[co]] <- value
-  }
-  if (!early_layout) {
-    check_uncertainty(dat, 29, c(27, 28),
-      c("normaldistribution", "setvalue", "5to95percentile", "normal", "uniformdistribution", "range", "uniform"))
-  }
-  class(out_df$C) <- "hyperlink"
-
-  check_output(out_df, source_rows, c("F", "G", "H", "I", "J", "K", LETTERS[17:26], "AA", "AB", "AC", "AD"), c("Q", "S", "U", "W", "Y"))
-
-  writeData(wb, template_sheet, out_df,
-            startRow = 5, startCol = 1,
-            colNames = FALSE, rowNames = FALSE, keepNA = TRUE)
-
-  if (out_file %in% current_outputs) stop("Output filename collision: ", out_file)
-  saveWorkbook(wb, out_file, overwrite = TRUE)
-  current_outputs <- c(current_outputs, out_file)
-  study_outputs[basename(sf)] <- out_file
-  generated_data[[basename(sf)]] <- out_df
-  screen_data[[basename(sf)]] <- data.frame(
-    file = basename(sf), sheet = source_sheet_i, source_row = source_rows,
-    intermediate_row = seq_len(n) + 4L, sample = trimws(as_chr(colA)),
-    lat = out_df$F, lon = out_df$G, age_Ma = out_df$H,
-    formation = trimws(as_chr(get_col(dat, if (early_layout) "R" else "Q"))),
-    depth_m = as_num(get_col(dat, if (early_layout) "W" else "Y")),
-    d13Ccc = out_df$Q, d13Com_occluded = out_df$S, d13Com_bulk = out_df$U,
-    stringsAsFactors = FALSE
-  )
+  d<-cbind(d,m[c("formation","depth_m")])
+  resolved<-resolve_duplicates(d,m,identity_match,c("Q","S","U","W","Y"),
+    c("F","G","H","I","J","K",LETTERS[13:26],"AA","AB","AC","AD","formation","depth_m"),c("L","AE"),
+    order(m$publication_year,m$file,m$source_row,na.last=TRUE))
+  write_resolved(resolved$data[,int2col(1:31)],m,resolved$keep,c("Q","S","U","W","Y"))
+  write_duplicates(resolved$report)
 }
-
-# combine
-if (length(generated_data)) {
-  combined_dat <- do.call(rbind, generated_data)
-  class(combined_dat$C) <- "hyperlink"
-  wb <- loadWorkbook(template_file)
-  writeData(wb, template_sheet, blank_row1,
-            startRow = 1, colNames = FALSE, rowNames = FALSE)
-  writeData(wb, template_sheet, combined_dat,
-            startRow = 5, colNames = FALSE, rowNames = FALSE, keepNA = TRUE)
-  saveWorkbook(wb, file.path(out_dir, "paleosol_Intermediate_combined.xlsx"),
-               overwrite = TRUE)
-  current_outputs <- c(current_outputs, file.path(out_dir, "paleosol_Intermediate_combined.xlsx"))
-}
-
-if (length(screen_data)) {
-  candidates <- find_duplicates(do.call(rbind, screen_data))
-  candidates$status <- rep("ambiguous: both retained; human review needed", nrow(candidates))
-  write_duplicates(candidates)
-  message("Duplicate candidate pairs: ", nrow(candidates))
-}
-
 finish_reports()
-
-cat("Done. Wrote outputs to: ", normalizePath(out_dir), "\n", sep = "")
