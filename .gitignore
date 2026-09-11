@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.positai
+
+
+.DS_Store
+
+# R artifacts
+*.Rcheck/
+*.tar.gz
